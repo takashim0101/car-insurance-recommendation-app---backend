@@ -4,7 +4,7 @@
   "description": "Backend for AI Insurance Recommendation Application",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest",
     "dev": "node server.js"
   },
   "keywords": [],
@@ -19,6 +19,8 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.2",
-    "@types/node": "^22.15.26"
+    "@types/node": "^22.15.26",
+    "supertest": "^7.0.0",
+    "vitest": "^3.2.2"
   }
 }

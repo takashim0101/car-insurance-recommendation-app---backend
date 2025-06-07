@@ -19,7 +19,7 @@ const API_KEY = process.env.GOOGLE_API_KEY;
 if (!API_KEY) {
     console.error('GOOGLE_API_KEY is not set in .env file.');
     console.error('Please obtain your API key from https://ai.google.dev/gemini-api/docs/get-started/nodejs and add it to your .env file.');
-    process.exit(1); // Exit if API key is not configured
+    // process.exit(1); // テスト時にプロセスが終了しないようにコメントアウト
 }
 const genAI = new GoogleGenerativeAI(API_KEY);
 
@@ -72,7 +72,7 @@ const insuranceProducts = {
         - Exclusions typically include: accidental damage to your own car if you're at fault, storm/water/hail damage to your car, and items stolen *from* your car (these are usually covered by Comprehensive).
         - Costs typically start around $200 a year (for drivers over 25 with no accident history). Third Party Fire and Theft is more expensive than standard Third Party, but still significantly cheaper than Comprehensive.
         - Cost-saving tips: buy online (often discounts), set driver age restrictions (e.g., 25+), pay annually (10-20% savings), and never auto-renew.
-        - Cove Insurance is noted to sometimes offer Comprehensive cover at prices comparable to Third Party Fire & Theft policies, making it a worthwhile comparison for those looking to upgrade.`,
+        - Note that Cove Insurance sometimes offers Comprehensive cover at prices comparable to Third Party Fire & Theft policies, making it a worthwhile comparison for those looking to upgrade.`,
         link: "https://www.moneyhub.co.nz/third-party-car-insurance.html"
     }
 };
@@ -107,7 +107,7 @@ const getSystemInstruction = () => {
         { text: `Ensure your recommendations strictly adhere to these business rules based on the information the user provides. If you need more information to apply the business rules, ask for it.` },
         { text: `When considering MBI, be mindful of its typical cost range ($1,000 to over $4,000 for 1-4 years), numerous exclusions, and that it's often sold as an add-on to car loans (which increases overall cost). Advise users to understand the fine print and compare options carefully. Emphasize that MBI and Comprehensive Car Insurance cover very different risks. Suggest alternatives like self-insuring or getting a pre-purchase inspection and regular servicing. Refer them to our detailed MBI guide: ${insuranceProducts.MBI.link}`}, // Added MBI link
         { text: `For Comprehensive Car Insurance, advise users to compare quotes from various providers (e.g., Cove, Tower, AMI, AA Insurance, AMP, State, Trade Me Insurance), as prices vary significantly (e.g., up to $500+ savings possible). Explain key factors affecting premiums (age, location, car model, parking, usage, accident history). Clarify 'Agreed Value' vs 'Market Value' and advise on checking exclusions (e.g., betterment charges, named drivers, unsealed roads). Encourage paying annually for discounts (10-15% savings). Always emphasize the importance of comparing quotes from multiple providers to find the best deal tailored to their specific needs and car details. Refer them to our detailed Comprehensive Car Insurance guide: ${insuranceProducts.Comprehensive.link}. For car purchases, also consider checking Turners Car Insurance which offers Autosure policies.`}, // Added Comprehensive link and Turners mention
-        { text: `For Third Party Car Insurance, explain the difference between 'Standard Third Party' (covers only damage to others) and 'Third Party Fire and Theft' (adds coverage for your own car's theft or fire). Emphasize that these policies do NOT cover accidental damage to your own car if you are at fault. Advise it's generally best for low-value vehicles and when the user can afford their own car's repairs. Mention that typical costs start around $200 a year for eligible drivers. Some policies might cover your car if an uninsured third party is at fault (with conditions). Highlight cost-saving tips like online comparison, driver age restrictions, annual payments, and avoiding auto-renewal. Note that Cove Insurance sometimes offers Comprehensive cover at prices comparable to Third Party Fire & Theft rates, making it a strong comparison option. Always emphasize the importance of comparing quotes from multiple providers to find the best deal tailored to their specific needs and car details. Refer them to our detailed Third Party Car Insurance guide: ${insuranceProducts.ThirdParty.link}`}, // Added Third Party link
+        { text: `For Third Party Car Insurance, explain the difference between 'Standard Third Party' (covers only damage to others) and 'Third Party Fire and Theft' (adds coverage for your own car's theft or fire). Emphasize that these policies do NOT cover accidental damage to your own car if you are at fault. Advise it's generally best for low-value vehicles and when the user can afford their own car's repairs. Mention that typical costs start around $200 a year (for drivers over 25 with no accident history). Some policies might cover your car if an uninsured third party is at fault (with conditions). Highlight cost-saving tips like online comparison, driver age restrictions, annual payments, and avoiding auto-renewal. Note that Cove Insurance sometimes offers Comprehensive cover at prices comparable to Third Party Fire & Theft rates, making it a strong comparison option. Always emphasize the importance of comparing quotes from multiple providers to find the best deal tailored to their specific needs and car details. Refer them to our detailed Third Party Car Insurance guide: ${insuranceProducts.ThirdParty.link}`}, // Added Third Party link
         { text: `After providing recommendations, you can offer to answer more questions about the recommended policies.` }
     ];
 };
@@ -125,7 +125,12 @@ app.post('/chat', async (req, res) => {
         return res.status(400).json({ error: 'Missing sessionId or userResponse in request body.' });
     }
 
-    let currentSessionHistory = chatHistories.get(sessionId) || [];
+    let previousHistory = chatHistories.get(sessionId) || [];
+    console.log(`--- Request Start for Session: ${sessionId} ---`);
+    console.log(`[DEBUG] Initial history length from Map: ${previousHistory.length}`);
+    console.log(`[DEBUG] Initial history content:`, JSON.stringify(previousHistory, null, 2));
+
+    let historyForGemini = []; // This will be built for the AI call
     let modelResponse = '';
 
     try {
@@ -137,32 +142,31 @@ app.post('/chat', async (req, res) => {
             },
         });
 
-        let aiStreamResponse;
+        let messageToSendToAI;
 
-        // Determine the message to send to the AI based on the current interaction.
-        if (currentSessionHistory.length === 0 && userResponse === "") {
-            // This is the very first request from the frontend (empty userResponse to initiate chat).
-            // We'll send an implicit "start conversation" message to the AI.
-            // This acts as the first 'user' turn for the Gemini model's internal history.
-            aiStreamResponse = await model.startChat({ history: [] }).sendMessageStream("Start conversation with Tina.");
-            // We will explicitly add this "Start conversation with Tina." to our `currentSessionHistory`
-            // *after* receiving Tina's response, to maintain the alternating `user`/`model` roles for subsequent turns.
+        // Determine the history to send to the AI based on the current interaction.
+        if (previousHistory.length === 0 && userResponse === "") {
+            // This is the very first request: send implicit user turn to AI.
+            // For the frontend's history, we'll explicitly add the user turn and AI response after getting it.
+            historyForGemini.push({ role: 'user', parts: [{ text: "Start conversation with Tina." }] });
+            messageToSendToAI = "Start conversation with Tina."; // Send this specific message to AI
+            console.log("[DEBUG] Handling initial empty message to AI.");
+            console.log(`[DEBUG] historyForGemini for AI:`, JSON.stringify(historyForGemini, null, 2));
+
         } else {
-            // For all subsequent requests, or if the first request had a real user message,
-            // we first add the user's current response to our `currentSessionHistory`.
-            // Then, we start a new chat with the *updated* `currentSessionHistory` (which now correctly alternates and ends with user),
-            // and send the user's message as the latest turn.
-            currentSessionHistory.push({ role: 'user', text: userResponse });
-            // Re-initialize chat with the *updated* history to ensure it's passed correctly.
-            // This ensures the internal model history always aligns with what we're tracking.
-            const chatWithUpdatedHistory = model.startChat({
-                history: currentSessionHistory.map(item => ({
-                    role: item.role,
-                    parts: [{ text: item.text }]
-                }))
-            });
-            aiStreamResponse = await chatWithUpdatedHistory.sendMessageStream(userResponse);
+            // For subsequent requests, build history for Gemini from previous entries and current user response.
+            historyForGemini = previousHistory.map(item => ({
+                role: item.role,
+                parts: [{ text: item.text }]
+            }));
+            historyForGemini.push({ role: 'user', parts: [{ text: userResponse }] });
+            messageToSendToAI = userResponse; // Send the actual user response to AI
+            console.log("[DEBUG] Handling subsequent user message.");
+            console.log(`[DEBUG] historyForGemini for AI:`, JSON.stringify(historyForGemini, null, 2));
         }
+
+        const chat = model.startChat({ history: historyForGemini });
+        const aiStreamResponse = await chat.sendMessageStream(messageToSendToAI); // Use messageToSendToAI here
 
         // Accumulate the full response from the AI stream
         for await (const chunk of aiStreamResponse.stream) {
@@ -173,19 +177,33 @@ app.post('/chat', async (req, res) => {
                 console.warn('Unexpected type for chunk.text():', typeof chunkText, chunkText);
             }
         }
+        console.log(`[DEBUG] Accumulated AI response: "${modelResponse}"`);
 
-        // After getting the model's response, append it to the session history.
-        // Special handling for the very first response to ensure history starts with 'user'.
-        if (currentSessionHistory.length === 0 && userResponse === "") {
-            // If it was the initial contact, add the implicit user turn before the model's response
-            currentSessionHistory.push({ role: 'user', text: "Start conversation with Tina." });
+
+        // Construct the *new* full history to be saved and returned to frontend
+        let newFullHistory = [...previousHistory]; // Start with the history *before* this turn's user message
+
+        // Add the current user's message and AI's response to the new history
+        // Special handling for the very first interaction: the "Start conversation with Tina." is only for the AI model's internal history.
+        // For the frontend, the first user message is actually empty, but we represent it as "Start conversation with Tina."
+        if (previousHistory.length === 0 && userResponse === "") {
+            newFullHistory.push({ role: 'user', text: "Start conversation with Tina." }); // Add the implicit user turn for frontend display
+            console.log("[DEBUG] Added implicit user turn to newFullHistory for frontend.");
+        } else {
+            // If it's a subsequent message, the previous user message has already been added to previousHistory,
+            // so we just add the current user's response.
+            newFullHistory.push({ role: 'user', text: userResponse }); // Add the actual user message
+            console.log("[DEBUG] Added user message to newFullHistory for frontend.");
         }
-        currentSessionHistory.push({ role: 'model', text: modelResponse }); // Add the AI's response
+        newFullHistory.push({ role: 'model', text: modelResponse }); // Add the AI's response
+        console.log(`[DEBUG] newFullHistory after AI model push: ${newFullHistory.length}`, JSON.stringify(newFullHistory, null, 2));
 
-        chatHistories.set(sessionId, currentSessionHistory); // Save updated history
+
+        chatHistories.set(sessionId, newFullHistory); // Save updated history
+        console.log(`[DEBUG] Final history saved to Map for Session: ${sessionId}, Length: ${chatHistories.get(sessionId).length}`);
 
         // Send the AI's response and the full current session history back to the frontend
-        res.json({ response: modelResponse, history: currentSessionHistory });
+        res.json({ response: modelResponse, history: newFullHistory });
 
     } catch (error) {
         console.error('Error calling Gemini API:', error);
@@ -195,6 +213,8 @@ app.post('/chat', async (req, res) => {
             errorMessage = "There was an internal chat history synchronization issue. Please refresh the page and try again.";
         }
         res.status(500).json({ error: errorMessage });
+    } finally {
+        console.log(`--- Request End for Session: ${sessionId} ---`);
     }
 });
 
@@ -202,3 +222,7 @@ app.post('/chat', async (req, res) => {
 app.listen(port, () => {
     console.log(`Backend server running on http://localhost:${port}`);
 });
+
+// Export app and chatHistories for testing purposes
+module.exports = { app, genAI, chatHistories };
+
